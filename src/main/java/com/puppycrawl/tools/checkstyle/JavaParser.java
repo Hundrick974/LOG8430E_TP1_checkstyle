@@ -152,49 +152,66 @@ public final class JavaParser {
     public static DetailAST appendHiddenCommentNodes(DetailAST root) {
         DetailAST curNode = root;
         DetailAST lastNode = root;
-
         while (curNode != null) {
             lastNode = curNode;
-
-            final List<Token> hiddenBefore = ((DetailAstImpl) curNode).getHiddenBefore();
-            if (hiddenBefore != null) {
-                DetailAST currentSibling = curNode;
-
-                final ListIterator<Token> reverseCommentsIterator =
-                        hiddenBefore.listIterator(hiddenBefore.size());
-
-                while (reverseCommentsIterator.hasPrevious()) {
-                    final DetailAST newCommentNode =
-                            createCommentAstFromToken((CommonToken)
-                                    reverseCommentsIterator.previous());
-                    ((DetailAstImpl) currentSibling).addPreviousSibling(newCommentNode);
-
-                    currentSibling = newCommentNode;
-                }
-            }
-
-            DetailAST toVisit = curNode.getFirstChild();
-            while (curNode != null && toVisit == null) {
-                toVisit = curNode.getNextSibling();
-                curNode = curNode.getParent();
-            }
-            curNode = toVisit;
+            appendHiddenCommentsBefore(curNode);
+            curNode = getNextNode(curNode);
         }
-        if (lastNode != null) {
-            final List<Token> hiddenAfter = ((DetailAstImpl) lastNode).getHiddenAfter();
-            if (hiddenAfter != null) {
-                DetailAST currentSibling = lastNode;
-                for (Token token : hiddenAfter) {
-                    final DetailAST newCommentNode =
-                            createCommentAstFromToken((CommonToken) token);
-
-                    ((DetailAstImpl) currentSibling).addNextSibling(newCommentNode);
-
-                    currentSibling = newCommentNode;
-                }
-            }
-        }
+        appendHiddenCommentsAfter(lastNode);
         return root;
+    }
+
+    /**
+     * Inserts hidden comments before a node in their original order.
+     *
+     * @param node the node preceded by the comments
+     */
+    private static void appendHiddenCommentsBefore(DetailAST node) {
+        final List<Token> hiddenBefore = ((DetailAstImpl) node).getHiddenBefore();
+        if (hiddenBefore != null) {
+            DetailAST currentSibling = node;
+            final ListIterator<Token> commentsIterator = hiddenBefore.listIterator(hiddenBefore.size());
+            while (commentsIterator.hasPrevious()) {
+                final DetailAST newCommentNode = createCommentAstFromToken((CommonToken) commentsIterator.previous());
+                ((DetailAstImpl) currentSibling).addPreviousSibling(newCommentNode);
+                currentSibling = newCommentNode;
+            }
+        }
+    }
+
+    /**
+     * Returns the next node in the depth-first traversal.
+     *
+     * @param node the current node
+     * @return the next node, or null when the traversal is complete
+     */
+    private static DetailAST getNextNode(DetailAST node) {
+        DetailAST current = node;
+        DetailAST toVisit = current.getFirstChild();
+        while (current != null && toVisit == null) {
+            toVisit = current.getNextSibling();
+            current = current.getParent();
+        }
+        return toVisit;
+    }
+
+    /**
+     * Inserts hidden comments after the last visited node in their original order.
+     *
+     * @param node the last node, or null for an empty tree
+     */
+    private static void appendHiddenCommentsAfter(DetailAST node) {
+        if (node != null) {
+            final List<Token> hiddenAfter = ((DetailAstImpl) node).getHiddenAfter();
+            if (hiddenAfter != null) {
+                DetailAST currentSibling = node;
+                for (Token token : hiddenAfter) {
+                    final DetailAST newCommentNode = createCommentAstFromToken((CommonToken) token);
+                    ((DetailAstImpl) currentSibling).addNextSibling(newCommentNode);
+                    currentSibling = newCommentNode;
+                }
+            }
+        }
     }
 
     /**
