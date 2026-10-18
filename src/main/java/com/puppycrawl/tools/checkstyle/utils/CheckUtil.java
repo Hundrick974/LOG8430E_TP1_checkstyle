@@ -23,7 +23,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -42,22 +41,6 @@ import com.puppycrawl.tools.checkstyle.checks.naming.AccessModifierOption;
  *
  */
 public final class CheckUtil {
-
-    // constants for parseDouble()
-    /** Binary radix. */
-    private static final int BASE_2 = 2;
-
-    /** Octal radix. */
-    private static final int BASE_8 = 8;
-
-    /** Decimal radix. */
-    private static final int BASE_10 = 10;
-
-    /** Hex radix. */
-    private static final int BASE_16 = 16;
-
-    /** Pattern matching underscore characters ('_'). */
-    private static final Pattern UNDERSCORE_PATTERN = Pattern.compile("_");
 
     /** Compiled pattern for all system newlines. */
     private static final Pattern ALL_NEW_LINES = Pattern.compile("\\R");
@@ -101,7 +84,7 @@ public final class CheckUtil {
 
     /**
      * Returns the value represented by the specified string of the specified
-     * type. Returns 0 for types other than float, double, int, and long.
+     * type. Returns NaN for types other than float, double, int, and long.
      *
      * @param text the string to be parsed.
      * @param type the token type of the text. Should be a constant of
@@ -109,69 +92,7 @@ public final class CheckUtil {
      * @return the double value represented by the string argument.
      */
     public static double parseDouble(String text, int type) {
-        String txt = UNDERSCORE_PATTERN.matcher(text).replaceAll("");
-
-        return switch (type) {
-            case TokenTypes.NUM_FLOAT, TokenTypes.NUM_DOUBLE -> Double.parseDouble(txt);
-
-            case TokenTypes.NUM_INT, TokenTypes.NUM_LONG -> {
-                int radix = BASE_10;
-                if (txt.startsWith("0x") || txt.startsWith("0X")) {
-                    radix = BASE_16;
-                    txt = txt.substring(2);
-                }
-                else if (txt.startsWith("0b") || txt.startsWith("0B")) {
-                    radix = BASE_2;
-                    txt = txt.substring(2);
-                }
-                else if (txt.startsWith("0")) {
-                    radix = BASE_8;
-                }
-                yield parseNumber(txt, radix, type);
-            }
-
-            default -> Double.NaN;
-        };
-    }
-
-    /**
-     * Parses the string argument as an integer or a long in the radix specified by
-     * the second argument. The characters in the string must all be digits of
-     * the specified radix.
-     *
-     * @param text the String containing the integer representation to be
-     *     parsed. Precondition: text contains a parsable int.
-     * @param radix the radix to be used while parsing text.
-     * @param type the token type of the text. Should be a constant of
-     *     {@link TokenTypes}.
-     * @return the number represented by the string argument in the specified radix.
-     */
-    private static double parseNumber(final String text, final int radix, final int type) {
-        String txt = text;
-        if (txt.endsWith("L") || txt.endsWith("l")) {
-            txt = txt.substring(0, txt.length() - 1);
-        }
-        final double result;
-
-        final boolean negative = txt.charAt(0) == '-';
-        if (type == TokenTypes.NUM_INT) {
-            if (negative) {
-                result = Integer.parseInt(txt, radix);
-            }
-            else {
-                result = Integer.parseUnsignedInt(txt, radix);
-            }
-        }
-        else {
-            if (negative) {
-                result = Long.parseLong(txt, radix);
-            }
-            else {
-                result = Long.parseUnsignedLong(txt, radix);
-            }
-        }
-
-        return result;
+        return NumericLiteralUtil.parseDouble(text, type);
     }
 
     /**
@@ -579,126 +500,7 @@ public final class CheckUtil {
      * @return true if the subtree is terminated.
      */
     public static boolean isTerminated(final DetailAST ast) {
-        return isTerminated(ast, true, true, new HashSet<>());
-    }
-
-    /**
-     * Checks if a given subtree terminated by return, throw, yield or,
-     * if allowed break, continue.
-     * When analyzing fall-through cases in switch statements, a Set of String labels
-     * is used to keep track of the labels encountered in the enclosing switch statements.
-     *
-     * @param ast root of given subtree
-     * @param useBreak should we consider break as terminator
-     * @param useContinue should we consider continue as terminator
-     * @param labelsForCurrentSwitchScope the Set labels for the current scope of the switch
-     * @return true if the subtree is terminated.
-     */
-    private static boolean isTerminated(final DetailAST ast, boolean useBreak, boolean useContinue,
-                                        Set<String> labelsForCurrentSwitchScope) {
-
-        return switch (ast.getType()) {
-            case TokenTypes.LITERAL_RETURN, TokenTypes.LITERAL_YIELD,
-                    TokenTypes.LITERAL_THROW -> true;
-            case TokenTypes.LITERAL_BREAK -> useBreak
-                    || hasLabel(ast, labelsForCurrentSwitchScope);
-            case TokenTypes.LITERAL_CONTINUE -> useContinue
-                    || hasLabel(ast, labelsForCurrentSwitchScope);
-            case TokenTypes.SLIST -> checkSlist(ast, useBreak, useContinue,
-                    labelsForCurrentSwitchScope);
-            case TokenTypes.LITERAL_IF -> checkIf(ast, useBreak, useContinue,
-                    labelsForCurrentSwitchScope);
-            case TokenTypes.LITERAL_FOR, TokenTypes.LITERAL_WHILE, TokenTypes.LITERAL_DO ->
-                checkLoop(ast, labelsForCurrentSwitchScope);
-            case TokenTypes.LITERAL_TRY -> checkTry(ast, useBreak, useContinue,
-                    labelsForCurrentSwitchScope);
-            case TokenTypes.LITERAL_SWITCH -> checkSwitch(ast, useContinue,
-                    labelsForCurrentSwitchScope);
-            case TokenTypes.LITERAL_SYNCHRONIZED ->
-                checkSynchronized(ast, useBreak, useContinue,
-                    labelsForCurrentSwitchScope);
-            case TokenTypes.LABELED_STAT -> {
-                labelsForCurrentSwitchScope.add(ast.getFirstChild().getText());
-                yield isTerminated(ast.getLastChild(), useBreak, useContinue,
-                        labelsForCurrentSwitchScope);
-            }
-            default -> false;
-        };
-    }
-
-    /**
-     * Checks if given break or continue ast has outer label.
-     *
-     * @param statement break or continue node
-     * @param labelsForCurrentSwitchScope the Set labels for the current scope of the switch
-     * @return true if local label used
-     */
-    private static boolean hasLabel(DetailAST statement, Set<String> labelsForCurrentSwitchScope) {
-        return Optional.ofNullable(statement)
-                .map(DetailAST::getFirstChild)
-                .filter(child -> child.getType() == TokenTypes.IDENT)
-                .map(DetailAST::getText)
-                .filter(label -> !labelsForCurrentSwitchScope.contains(label))
-                .isPresent();
-    }
-
-    /**
-     * Checks if a given SLIST terminated by return, throw or,
-     * if allowed break, continue.
-     *
-     * @param slistAst SLIST to check
-     * @param useBreak should we consider break as terminator
-     * @param useContinue should we consider continue as terminator
-     * @param labels label names
-     * @return true if SLIST is terminated.
-     */
-    private static boolean checkSlist(final DetailAST slistAst, boolean useBreak,
-                                      boolean useContinue, Set<String> labels) {
-        DetailAST lastStmt = slistAst.getLastChild();
-
-        if (lastStmt.getType() == TokenTypes.RCURLY) {
-            lastStmt = lastStmt.getPreviousSibling();
-        }
-
-        while (TokenUtil.isOfType(lastStmt, TokenTypes.SINGLE_LINE_COMMENT,
-                TokenTypes.BLOCK_COMMENT_BEGIN)) {
-            lastStmt = lastStmt.getPreviousSibling();
-        }
-
-        return lastStmt != null
-            && isTerminated(lastStmt, useBreak, useContinue, labels);
-    }
-
-    /**
-     * Checks if a given IF terminated by return, throw or,
-     * if allowed break, continue.
-     *
-     * @param ast IF to check
-     * @param useBreak should we consider break as terminator
-     * @param useContinue should we consider continue as terminator
-     * @param labels label names
-     * @return true if IF is terminated.
-     */
-    private static boolean checkIf(final DetailAST ast, boolean useBreak,
-                                   boolean useContinue, Set<String> labels) {
-        final DetailAST thenStmt = getNextNonCommentAst(ast.findFirstToken(TokenTypes.RPAREN));
-
-        final DetailAST elseStmt = ast.findFirstToken(TokenTypes.LITERAL_ELSE);
-
-        final boolean isTerminated;
-
-        if (checkInfiniteLoop(ast.getParent().getParent())) {
-            isTerminated = isTerminated(thenStmt, useBreak, useContinue, labels)
-                    || elseStmt != null
-                    && isTerminated(elseStmt.getLastChild(), useBreak, useContinue, labels);
-        }
-        else {
-            isTerminated = elseStmt != null
-                    && isTerminated(thenStmt, useBreak, useContinue, labels)
-                    && isTerminated(elseStmt.getLastChild(), useBreak, useContinue, labels);
-        }
-
-        return isTerminated;
+        return TerminationUtil.isTerminated(ast);
     }
 
     /**
@@ -708,156 +510,7 @@ public final class CheckUtil {
      * @return next ast after skipping comment
      */
     public static DetailAST getNextNonCommentAst(DetailAST ast) {
-        DetailAST nextSibling = ast.getNextSibling();
-        while (TokenUtil.isOfType(nextSibling, TokenTypes.SINGLE_LINE_COMMENT,
-                TokenTypes.BLOCK_COMMENT_BEGIN)) {
-            nextSibling = nextSibling.getNextSibling();
-        }
-        return nextSibling;
-    }
-
-    /**
-     * Checks if a given loop terminated by return, throw or,
-     * if allowed break, continue.
-     *
-     * @param ast loop to check
-     * @param labels label names
-     * @return true if loop is terminated.
-     */
-    private static boolean checkLoop(final DetailAST ast, Set<String> labels) {
-        final DetailAST loopBody;
-        if (ast.getType() == TokenTypes.LITERAL_DO) {
-            final DetailAST lparen = ast.findFirstToken(TokenTypes.DO_WHILE);
-            loopBody = lparen.getPreviousSibling();
-        }
-        else {
-            final DetailAST rparen = ast.findFirstToken(TokenTypes.RPAREN);
-            loopBody = rparen.getNextSibling();
-        }
-
-        return checkInfiniteLoop(ast) && !isTerminated(loopBody, true, false, labels)
-                || isTerminated(loopBody, false, false, labels);
-    }
-
-    /**
-     * Checks if a given try/catch/finally block terminated by return, throw or,
-     * if allowed break, continue.
-     *
-     * @param ast loop to check
-     * @param useBreak should we consider break as terminator
-     * @param useContinue should we consider continue as terminator
-     * @param labels label names
-     * @return true if try/catch/finally block is terminated
-     */
-    private static boolean checkTry(final DetailAST ast, boolean useBreak,
-                                    boolean useContinue, Set<String> labels) {
-        final DetailAST finalStmt = ast.getLastChild();
-        boolean isTerminated = finalStmt.getType() == TokenTypes.LITERAL_FINALLY
-                && isTerminated(finalStmt.findFirstToken(TokenTypes.SLIST),
-                useBreak, useContinue, labels);
-
-        if (!isTerminated) {
-            DetailAST firstChild = ast.getFirstChild();
-
-            if (firstChild.getType() == TokenTypes.RESOURCE_SPECIFICATION) {
-                firstChild = firstChild.getNextSibling();
-            }
-
-            isTerminated = isTerminated(firstChild,
-                    useBreak, useContinue, labels);
-
-            DetailAST catchStmt = ast.findFirstToken(TokenTypes.LITERAL_CATCH);
-            while (catchStmt != null
-                    && isTerminated
-                    && catchStmt.getType() == TokenTypes.LITERAL_CATCH) {
-                final DetailAST catchBody =
-                        catchStmt.findFirstToken(TokenTypes.SLIST);
-                isTerminated = isTerminated(catchBody, useBreak, useContinue, labels);
-                catchStmt = catchStmt.getNextSibling();
-            }
-        }
-        return isTerminated;
-    }
-
-    /**
-     * Checks if a given switch terminated by return, throw or,
-     * if allowed break, continue.
-     *
-     * @param literalSwitchAst loop to check
-     * @param useContinue should we consider continue as terminator
-     * @param labels label names
-     * @return true if switch is terminated
-     */
-    private static boolean checkSwitch(DetailAST literalSwitchAst,
-                                       boolean useContinue, Set<String> labels) {
-        DetailAST caseGroup = literalSwitchAst.findFirstToken(TokenTypes.CASE_GROUP);
-        boolean isTerminated = caseGroup != null;
-        while (isTerminated && caseGroup.getType() != TokenTypes.RCURLY) {
-            final DetailAST caseBody =
-                caseGroup.findFirstToken(TokenTypes.SLIST);
-            isTerminated = caseBody != null
-                    && isTerminated(caseBody, false, useContinue, labels);
-            caseGroup = caseGroup.getNextSibling();
-        }
-        return isTerminated;
-    }
-
-    /**
-     * Checks if a given synchronized block terminated by return, throw or,
-     * if allowed break, continue.
-     *
-     * @param synchronizedAst synchronized block to check.
-     * @param useBreak should we consider break as terminator
-     * @param useContinue should we consider continue as terminator
-     * @param labels label names
-     * @return true if synchronized block is terminated
-     */
-    private static boolean checkSynchronized(final DetailAST synchronizedAst, boolean useBreak,
-                                      boolean useContinue, Set<String> labels) {
-        return isTerminated(
-            synchronizedAst.findFirstToken(TokenTypes.SLIST), useBreak, useContinue, labels);
-    }
-
-    /**
-     * Checks whether the given ast is an infinite loop.
-     *
-     * @param ast the token to check
-     * @return true if the token is an infinite, false otherwise
-     */
-    private static boolean checkInfiniteLoop(DetailAST ast) {
-        boolean isInfiniteLoop = false;
-        if (ast.getType() == TokenTypes.LITERAL_FOR) {
-            isInfiniteLoop = checkForLoop(ast);
-        }
-        else if (ast.getType() == TokenTypes.LITERAL_WHILE
-                || ast.getType() == TokenTypes.LITERAL_DO) {
-            final DetailAST lparen = NullUtil.notNull(ast.findFirstToken(TokenTypes.LPAREN));
-            final DetailAST expression = NullUtil.notNull(lparen.getNextSibling());
-            final DetailAST firstChild = NullUtil.notNull(expression.getFirstChild());
-            isInfiniteLoop = firstChild.getType() == TokenTypes.LITERAL_TRUE;
-        }
-        return isInfiniteLoop;
-    }
-
-    /**
-     * Checks if a for loop is infinite (empty or {@code true} condition).
-     *
-     * @param forLoop the for loop to check
-     * @return true if the for loop is infinite
-     */
-    private static boolean checkForLoop(DetailAST forLoop) {
-        boolean isInfiniteLoop = false;
-        if (forLoop.findFirstToken(TokenTypes.FOR_EACH_CLAUSE) == null) {
-            final DetailAST condition =
-                    NullUtil.notNull(forLoop.findFirstToken(TokenTypes.FOR_CONDITION));
-            DetailAST child = condition.getFirstChild();
-            if (child != null) {
-                // EXPR node always has child
-                child = NullUtil.notNull(child.getFirstChild());
-            }
-            isInfiniteLoop = child == null || child.getType() == TokenTypes.LITERAL_TRUE;
-        }
-        return isInfiniteLoop;
+        return TokenUtil.getNextNonCommentAst(ast);
     }
 
 }

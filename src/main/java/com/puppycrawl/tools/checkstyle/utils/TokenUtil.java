@@ -236,6 +236,21 @@ public final class TokenUtil {
     }
 
     /**
+     * Returns the next sibling, skipping comment nodes.
+     *
+     * @param ast current ast
+     * @return next ast after skipping comment
+     */
+    public static DetailAST getNextNonCommentAst(DetailAST ast) {
+        DetailAST nextSibling = ast.getNextSibling();
+        while (TokenUtil.isOfType(nextSibling, TokenTypes.SINGLE_LINE_COMMENT,
+                TokenTypes.BLOCK_COMMENT_BEGIN)) {
+            nextSibling = nextSibling.getNextSibling();
+        }
+        return nextSibling;
+    }
+
+    /**
      * Finds the first {@link Optional} child token of {@link DetailAST} root node
      * which matches the given predicate.
      *
